@@ -167,6 +167,85 @@ pfUI:RegisterModule("nameplates", "vanilla:tbc", function ()
     end
   end
 
+  local function GetFrameFirstFontString(frame)
+    if not frame or not frame.GetRegions then return end
+    local regions = { frame:GetRegions() }
+    for i = 1, table.getn(regions) do
+      local region = regions[i]
+      if region and region.GetObjectType and region:GetObjectType() == "FontString" then
+        return region
+      end
+    end
+  end
+
+  local function GetFrameIconObject(frame)
+    if not frame then return end
+
+    if frame.Icon and frame.Icon.GetTexture then
+      return frame.Icon
+    end
+
+    if frame.GetChildren then
+      local children = { frame:GetChildren() }
+      for i = 1, table.getn(children) do
+        local child = children[i]
+        if child then
+          if child.GetObjectType and child:GetObjectType() == "Texture" then
+            return child
+          else
+            local tex = GetFrameIconObject(child)
+            if tex then return tex end
+          end
+        end
+      end
+    end
+  end
+
+  local function GetOriginalPlateCast(plate)
+    local castbar = plate and plate.original and plate.original.castbar
+    if not castbar then return end
+    if not castbar.casting and not castbar.channeling then return end
+
+    local min, max = castbar:GetMinMaxValues()
+    if not min or not max or max <= min then return end
+
+    local value = castbar:GetValue()
+    if value == nil then return end
+
+    local duration = max - min
+    local progress
+    if castbar.channeling then
+      progress = max - value
+    else
+      progress = value - min
+    end
+
+    if progress < 0 then progress = 0 end
+    if progress > duration then progress = duration end
+
+    local startTime = (GetTime() - progress) * 1000
+    local endTime = startTime + duration * 1000
+
+    if not startTime or not endTime then return end
+
+    if not castbar.pfuiTextRegion then
+      castbar.pfuiTextRegion = castbar.Text or GetFrameFirstFontString(castbar)
+    end
+
+    if not castbar.pfuiIconRegion then
+      castbar.pfuiIconRegion = GetFrameIconObject(castbar)
+    end
+
+    local textRegion = castbar.pfuiTextRegion
+    local iconRegion = castbar.pfuiIconRegion
+
+    local spellName = textRegion and textRegion:GetText() or ""
+    local texture = iconRegion and iconRegion:GetTexture() or nil
+    local isChannel = castbar.channeling and true or nil
+
+    return spellName, texture, startTime, endTime, isChannel
+  end
+
   local filter, list, cache
   local function DebuffFilterPopulate()
     -- initialize variables
@@ -1043,8 +1122,47 @@ pfUI:RegisterModule("nameplates", "vanilla:tbc", function ()
         if not cast then channel, nameSubtext, text, texture, startTime, endTime, isTradeSkill = UnitChannelInfo(nameplate.parent:GetName(1)) end
       end
 
+      local fallbackName, fallbackTexture, fallbackStart, fallbackEnd, fallbackChannel = GetOriginalPlateCast(nameplate)
+      local hasFallback = fallbackStart and fallbackEnd
+
+      if not cast and not channel then
+        if hasFallback then
+          cast = fallbackName or ""
+          texture = texture or fallbackTexture
+          startTime = fallbackStart
+          endTime = fallbackEnd
+          channel = fallbackChannel and cast or nil
+        else
+          nameplate.castbar:Hide()
+          if nameplate.castbar.icon and nameplate.castbar.icon.tex then
+            nameplate.castbar.icon.tex:SetTexture("")
+            nameplate.castbar.icon.tex:SetTexCoord(0, 1, 0, 1)
+          end
+          return
+        end
+      elseif not target then
+        if hasFallback then
+          cast = fallbackName ~= "" and fallbackName or cast
+          texture = texture or fallbackTexture
+          startTime = fallbackStart
+          endTime = fallbackEnd
+          channel = fallbackChannel and cast or nil
+        else
+          nameplate.castbar:Hide()
+          if nameplate.castbar.icon and nameplate.castbar.icon.tex then
+            nameplate.castbar.icon.tex:SetTexture("")
+            nameplate.castbar.icon.tex:SetTexCoord(0, 1, 0, 1)
+          end
+          return
+        end
+      end
+
       if not cast and not channel then
         nameplate.castbar:Hide()
+        if nameplate.castbar.icon and nameplate.castbar.icon.tex then
+          nameplate.castbar.icon.tex:SetTexture("")
+          nameplate.castbar.icon.tex:SetTexCoord(0, 1, 0, 1)
+        end
       elseif cast or channel then
         local effect = cast or channel
         local duration = endTime - startTime
@@ -1067,6 +1185,9 @@ pfUI:RegisterModule("nameplates", "vanilla:tbc", function ()
         if texture then
           nameplate.castbar.icon.tex:SetTexture(texture)
           nameplate.castbar.icon.tex:SetTexCoord(.1,.9,.1,.9)
+        elseif nameplate.castbar.icon and nameplate.castbar.icon.tex then
+          nameplate.castbar.icon.tex:SetTexture("")
+          nameplate.castbar.icon.tex:SetTexCoord(0, 1, 0, 1)
         end
       end
     else
